@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const { verifyConnection } = require('./db');
 
 const authRoutes = require('./routes/auth');
@@ -16,12 +17,31 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || '*' }));
 app.use(express.json({ limit: '2mb' }));
 
+// General limiter — applies to every route, guards against abusive traffic overall.
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down and try again shortly.' },
+});
+app.use(generalLimiter);
+
+// Stricter limiter on auth — login/signup are the main brute-force targets.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login/signup attempts. Please try again in a few minutes.' },
+});
+
 app.get('/health', async (req, res) => {
   const connected = await verifyConnection();
   res.status(connected ? 200 : 503).json({ status: connected ? 'ok' : 'db_unreachable' });
 });
 
-app.use('/auth', authRoutes);
+app.use('/auth', authLimiter, authRoutes);
 app.use('/profile', profileRoutes);
 app.use('/jobs', jobRoutes);
 app.use('/scoring', scoringRoutes);
